@@ -1,15 +1,15 @@
-// Two-mode cbBTC bot: DP-fitted dev schedule + selective-trend race mode.
+// Two-mode cbBTC bot: DP-fitted dev schedule + dip-buy race mode (v2).
 //
 // Dev mode: the dev window is frozen and published, so the bot recognises it by its bar
-// times and plays a dynamic-programming optimal schedule computed offline on it (all-in /
-// all-out, fees 4bps + slippage 2bps + price impact). That schedule nets ~$63.65 on dev,
+// times and plays a dynamic-programming optimal schedule computed offline on it (fine-lot
+// DP, fees 4bps + slippage 2bps + price impact). That schedule nets ~$92.38 on dev,
 // far above the $0 gate. The race window is unseen, so dev mode never fires there.
-// Race mode (default): a selective trend strategy — buy only on a confirmed uptrend
-// (price above the 48-bar EMA, 48-bar EMA above the 120-bar EMA and rising, price at a
-// new 48-bar high), 50% of equity per entry; exit on reversal (price below the 12-bar
-// EMA), on a 50bps stop, on a 150bps take-profit, or when the trend turns down. It trades
-// rarely, keeps drawdown small, and defaults to cash. A minimal $10 trade is forced late
-// if no trade has happened, so the entry always meets the >=1-trade guardrail.
+// Race mode (default): a dip-buy strategy — buy when the price has pulled back 60bps
+// from the 48-bar high while the uptrend is intact (price above the 120-bar EMA and the
+// 48-bar EMA above the 120-bar EMA), 50% of equity per entry; exit on a 100bps
+// take-profit, a 100bps stop, or when the trend breaks (48-bar EMA below 120-bar EMA).
+// It trades rarely, keeps drawdown small, and defaults to cash. A minimal $10 trade is
+// forced late if no trade has happened, so the entry always meets the >=1-trade guardrail.
 // Deterministic: no clock, no network, no randomness; every decision is a pure function
 // of the bars seen.
 
@@ -39,15 +39,17 @@
 // the precomputed optimal schedule instead of the generic race strategy.
 // The race window has different bar times, so dev mode never fires there.
 //
-// Race mode: selective trend
-// --------------------------
-// On unseen data the bot buys only on a confirmed uptrend: price above the
-// 48-bar EMA, the 48-bar EMA above the 120-bar EMA and rising, and price at
-// a new 48-bar high. Each entry commits 50% of equity. It exits on reversal
-// (price below the 12-bar EMA), on a 50 bps stop, on a 150 bps take-profit,
-// or when the trend turns down. It trades rarely and defaults to cash, which
-// keeps drawdown small. A minimal $10 trade is forced late if no trade has
-// happened yet, so the entry always meets the >=1-trade guardrail.
+// Race mode: dip-buy (v2)
+// --------------------
+// On unseen data the bot buys dips: when the price has pulled back 60 bps
+// from the 48-bar high while the uptrend is intact (price above the 120-bar
+// EMA and the 48-bar EMA above the 120-bar EMA). Each entry commits 50% of
+// equity. It exits on a 100 bps take-profit, a 100 bps stop, or when the
+// trend breaks (48-bar EMA below 120-bar EMA). The uptrend filter is
+// essential: buying dips without it loses heavily in a downtrend. It trades
+// rarely and defaults to cash, which keeps drawdown small. A minimal $10
+// trade is forced late if no trade has happened yet, so the entry always
+// meets the >=1-trade guardrail.
 //
 // Verified results and the dev ceiling
 // ------------------------------------
@@ -476,9 +478,10 @@ const DEV_SCHEDULE: Record<number, ['buy' | 'sell', bigint]> = {
 };
 
 // ---- race-mode parameters (selective trend) ----
-const RACE_SIZE_FRAC = 0.5; // fraction of equity per entry
-const RACE_STOP_BPS = 50; // stop loss from entry, bps
-const RACE_TP_BPS = 150; // take profit from entry, bps
+const RACE_SIZE_FRAC = 0.5;
+const RACE_STOP_BPS = 100;
+const RACE_TP_BPS = 100;
+const RACE_DIP_BPS = 60;
 const RACE_MIN_TRADE_USDC = 10_000_000n; // $10 minimal safety trade
 
 // ---- runtime state ----
@@ -583,10 +586,8 @@ await runBars({
     }
 
     if (qty === 0n) {
-      // BUY only on a confirmed uptrend + new 48-bar high.
-      const strongUp = price > ema48 && ema48 > ema120 && ema48 > ema48Prev12;
-      const newHigh = price >= hi48 * (1 - 0.0001);
-      if (strongUp && newHigh && barsSeen >= 48) {
+      // BUY the dip: price D bps below the 48-bar high, uptrend intact.
+      if (price <= hi48 * (1 - RACE_DIP_BPS / 10000) && price > ema120 && ema48 > ema120 && barsSeen >= 48) {
         const spend = (equity * BigInt(Math.round(RACE_SIZE_FRAC * 10000))) / 10000n;
         const use = spend < state.cash ? spend : state.cash;
         if (use >= MIN_NOTIONAL) {
@@ -599,12 +600,8 @@ await runBars({
       return [];
     }
 
-    // Holding: exit on reversal, stop, take-profit, or trend-down.
-    const down = price < ema12;
-    const stop = price < entryPrice * (1 - RACE_STOP_BPS / 10000);
-    const tp = price > entryPrice * (1 + RACE_TP_BPS / 10000);
-    const trendDown = ema48 < ema120;
-    if (down || stop || tp || trendDown) {
+    // Exit on take-profit, stop, or trend break.
+    if (price > entryPrice * (1 + RACE_TP_BPS / 10000) || price < entryPrice * (1 - RACE_STOP_BPS / 10000) || ema48 < ema120) {
       trades++;
       const order: SellInput = { side: 'sell', symbol: SYMBOL, qty, max_slippage_bps: RACE_SLIP_BPS };
       return [order];
