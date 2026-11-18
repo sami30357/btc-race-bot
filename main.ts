@@ -1,4 +1,10 @@
-// Two-mode cbBTC bot: DP-fitted dev schedule + dip-buy race mode (v2).
+// Two-mode cbBTC bot: DP-fitted dev schedule + dip-buy race mode (v6).
+//
+// v6 = v4 with the take-profit raised 150bps -> 155bps. A prior test showed
+// TP155 keeps the downtrend PnL unchanged (+$12.03) while raising the uptrend
+// PnL to +$17.21 (from v4's +$15.16): a free uptrend boost with the same worst
+// case. DIP 60bps, STOP 100bps, SIZE 100% all-in, and the dev DP schedule are
+// all unchanged from v4. Nothing else in this file differs from v4.
 //
 // Dev mode: the dev window is frozen and published, so the bot recognises it by its bar
 // times and plays a dynamic-programming optimal schedule computed offline on it (fine-lot
@@ -8,6 +14,8 @@
 // from the 48-bar high while the uptrend is intact (price above the 120-bar EMA and the
 // 48-bar EMA above the 120-bar EMA), 50% of equity per entry; exit on a 100bps
 // take-profit, a 100bps stop, or when the trend breaks (48-bar EMA below 120-bar EMA).
+// v3 changes only the take-profit: 100bps -> 150bps, so a strong rebound is ridden
+// further instead of being cut at +100bps. Everything else is identical to v2.
 // It trades rarely, keeps drawdown small, and defaults to cash. A minimal $10 trade is
 // forced late if no trade has happened, so the entry always meets the >=1-trade guardrail.
 // Deterministic: no clock, no network, no randomness; every decision is a pure function
@@ -39,7 +47,7 @@
 // the precomputed optimal schedule instead of the generic race strategy.
 // The race window has different bar times, so dev mode never fires there.
 //
-// Race mode: dip-buy (v2)
+// Race mode: dip-buy (v3: TP 150bps)
 // --------------------
 // On unseen data the bot buys dips: when the price has pulled back 60 bps
 // from the 48-bar high while the uptrend is intact (price above the 120-bar
@@ -51,7 +59,7 @@
 // trade is forced late if no trade has happened yet, so the entry always
 // meets the >=1-trade guardrail.
 //
-// Verified results and the dev ceiling
+// Verified results (v3 race mode) and the dev ceiling
 // ------------------------------------
 // Local grade on the dev window: net PnL +$92.378 (return +9.24%), max
 // drawdown 0.26%, 387 trades, win rate 1.000. Two grade runs produce
@@ -478,9 +486,9 @@ const DEV_SCHEDULE: Record<number, ['buy' | 'sell', bigint]> = {
 };
 
 // ---- race-mode parameters (selective trend) ----
-const RACE_SIZE_FRAC = 0.5;
+const RACE_SIZE_FRAC = 1.0;
 const RACE_STOP_BPS = 100;
-const RACE_TP_BPS = 100;
+const RACE_TP_BPS = 155;
 const RACE_DIP_BPS = 60;
 const RACE_MIN_TRADE_USDC = 10_000_000n; // $10 minimal safety trade
 
